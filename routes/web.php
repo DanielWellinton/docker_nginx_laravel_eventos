@@ -29,10 +29,13 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/compraingressos', [CompraIngressoController::class, 'index'])->name('compraingressos.index');
     Route::get('/compraingressos/create', [CompraIngressoController::class, 'create'])->name('compraingressos.create');
     Route::post('/compraingressos', [CompraIngressoController::class, 'store'])->name('compraingressos.store');
-    Route::get('/compraingressos/{id}', [CompraIngressoController::class, 'show'])->name('compraingressos.show');
-    Route::get('/compraingressos/{id}/edit', [CompraIngressoController::class, 'edit'])->name('compraingressos.edit');
-    Route::put('/compraingressos/{id}', [CompraIngressoController::class, 'update'])->name('compraingressos.update');
-    Route::delete('/compraingressos/{id}', [CompraIngressoController::class, 'destroy'])->name('compraingressos.destroy');
+    // Route::get('/compraingressos/{id}', [CompraIngressoController::class, 'show'])->name('compraingressos.show');
+    // Route::get('/compraingressos/{id}/edit', [CompraIngressoController::class, 'edit'])->name('compraingressos.edit');
+    // Route::put('/compraingressos/{id}', [CompraIngressoController::class, 'update'])->name('compraingressos.update');
+    // Route::delete('/compraingressos/{id}', [CompraIngressoController::class, 'destroy'])->name('compraingressos.destroy');
+    Route::get('/compraingressos/success', [CompraIngressoController::class, 'success'])->name('compraingressos.success');
+    Route::get('/compraingressos/cancel', [CompraIngressoController::class, 'cancel'])->name('compraingressos.cancel');
+
 
     Route::middleware(['admin'])->group(function () {
         Route::get('/ingressos', [IngressoController::class, 'index'])->name('ingressos.index');

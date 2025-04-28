@@ -2,12 +2,20 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Evento;
 use App\Models\Ingresso;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
+use Stripe\StripeClient;
 
 class CompraIngressoController extends Controller
 {
+    private $stripe; // ./stripe listen --forward-to http://localhost:80/stripe/webhook
+
+    public function __construct()
+    {
+        $this->stripe = new StripeClient(env('STRIPE_SECRET'));
+    }
+
     public function index(Request $request) {
         $query = Ingresso::query();
 
@@ -29,59 +37,142 @@ class CompraIngressoController extends Controller
 
     public function create(Request $request)
     {
-        $idIngressos = $request->query('ingressos');
-        $ingressos = DB::table('ingressos')
-            ->whereIn('id', array_keys($idIngressos))
-            ->get();
-        foreach($ingressos as $ingresso) {
-            $ingresso->quantity = $idIngressos[$ingresso->id];
+        // Recupera o session_id da URL
+        $sessionId = $request->query('session_id');
+        
+        if (!$sessionId) {
+            return redirect()->route('compraingressos.index');
+        }
+    
+        // Recupera a sessão do Stripe usando o session_id
+        \Stripe\Stripe::setApiKey(env('STRIPE_SECRET'));
+        $checkout_session = \Stripe\Checkout\Session::retrieve($sessionId);
+    
+        return view('compraingressos.create', [
+            'checkoutSession' => $checkout_session
+        ]);
+    }
+
+    public function store(Request $request)
+    {
+        // Validação dos dados
+        $dados = $request->validate([
+            'ingressos' => 'required|array',
+            'ingressos.*' => 'required|integer|min:0',
+        ]);
+
+        // Calcula o total e prepara os itens do checkout
+        $total = 0;
+        $line_items = [];
+        $metadataIngressos = [];
+        foreach ($dados['ingressos'] as $ingressoId => $quantidade) {
+            if ($quantidade < 1) {
+                continue; // pula se a quantidade for zero ou negativa
+            }
+            $ingresso = Ingresso::findOrFail($ingressoId);
+            $metadataIngressos[$ingresso->name] = $quantidade;
+            $preco = $ingresso->priceAtivo->unit_amount / 100; // Preço em reais
+            $total += $preco * $quantidade;
+
+            // Adiciona cada ingresso como um item no checkout
+            $line_items[] = [
+                'price_data' => [
+                    'currency' => 'brl',
+                    'product_data' => [
+                        'name' => $ingresso->name,
+                        'description' => $ingresso->description ?? 'Ingressos para evento',
+                    ],
+                    'unit_amount' => (int)($preco * 100), // Converte para centavos
+                ],
+                'quantity' => $quantidade,
+            ];
         }
 
-        return view('compraingressos.create', compact('ingressos'));
+        // Cria a sessão de checkout no Stripe
+        \Stripe\Stripe::setApiKey(env('STRIPE_SECRET'));
+
+        try {
+            $checkout_session = \Stripe\Checkout\Session::create([
+                'payment_method_types' => ['card'],
+                'line_items' => $line_items,
+                'mode' => 'payment',
+                'success_url' => route('compraingressos.success') . '?session_id={CHECKOUT_SESSION_ID}',
+                'cancel_url' => route('compraingressos.cancel'),
+                'metadata' => [
+                    'evento_id' => $ingresso->evento_id,
+                    'ingressos' => json_encode($metadataIngressos),
+                ],
+            ]);
+            
+            // Redireciona para a página de pagamento com o session_id
+            return redirect()->route('compraingressos.create', ['session_id' => $checkout_session->id]);
+
+        } catch (\Stripe\Exception\ApiErrorException $e) {
+            // Caso ocorra algum erro, você pode adicionar uma mensagem de erro
+            return back()->withErrors(['error' => 'Erro ao criar sessão de checkout: ' . $e->getMessage()]);
+        }
     }
 
-    public function store(Request $request) {
-        $dados = $request->validate([
-            'evento_id' => 'required|exists:eventos,id',
-            'unit_amount' => 'required|numeric|min:0',
-            'quantity' => 'required|integer|min:1',
-            'nome' => 'required|string|min:1',
-        ]);
-
-
-        $ingresso = Ingresso::create($dados);
-
-        return response()->json($ingresso, 201);
-    }
-
-    public function show($id) {
-        $ingresso = Ingresso::with('evento')->findOrFail($id);
-        return response()->json($ingresso);
-    }
-
-    public function edit($id)
+    public function success(Request $request)
     {
-        $eventos = Evento::all();
-        $ingresso = Ingresso::findOrFail($id);
-        return view('compraingressos.edit', compact('ingresso', 'eventos'));
+        // Recupera o session_id da URL
+        $sessionId = $request->query('session_id');
+    
+        // Verifica se o session_id existe
+        if (!$sessionId) {
+            return redirect()->route('compraingressos.index')->withErrors(['error' => 'Sessão inválida.']);
+        }
+    
+        // Recupera a sessão do Stripe usando o session_id
+        \Stripe\Stripe::setApiKey(env('STRIPE_SECRET'));
+        try {
+            $checkoutSession = \Stripe\Checkout\Session::retrieve($sessionId);
+    
+            // Verifica se a sessão foi recuperada corretamente
+            if (!$checkoutSession) {
+                return redirect()->route('compraingressos.index')->withErrors(['error' => 'Sessão de pagamento não encontrada.']);
+            }
+    
+            // Recupera os ingressos selecionados e o evento
+            $ingressos = json_decode($checkoutSession->metadata->ingressos, true) ?? [];
+            $eventoId = $checkoutSession->metadata->evento_id;
+            $evento = Evento::find($eventoId);
+    
+            // Carrega os ingressos do banco de dados com seus preços
+            $ingressosDetalhados = [];
+            foreach ($ingressos as $nome => $quantidade) {
+                $ingresso = Ingresso::where('name', $nome)->first();
+    
+                // Carrega o preço ativo do ingresso
+                if ($ingresso) {
+                    $ingresso->preco_ativo = $ingresso->priceAtivo;
+                    $ingressosDetalhados[$nome] = [
+                        'quantidade' => $quantidade,
+                        'preco' => $ingresso->preco_ativo ? $ingresso->preco_ativo->unit_amount / 100 : 0,
+                        'ingresso' => $ingresso
+                    ];
+                }
+            }
+    
+            // Passa os dados para a view
+            return view('compraingressos.success', [
+                'checkoutSession' => $checkoutSession,
+                'ingressosDetalhados' => $ingressosDetalhados,
+                'evento' => $evento,
+            ]);
+    
+        } catch (\Stripe\Exception\ApiErrorException $e) {
+            // Caso ocorra um erro na API do Stripe, exibe a mensagem de erro
+            return redirect()->route('compraingressos.index')->withErrors(['error' => 'Erro ao recuperar sessão de pagamento: ' . $e->getMessage()]);
+        }
+    }
+    
+    
+       
+
+    public function cancel()
+    {
+        return view('compraingressos.cancel');
     }
 
-    public function update(Request $request, $id) {
-        $ingresso = Ingresso::findOrFail($id);
-
-        $request->validate([
-            'evento_id' => 'required|exists:eventos,id',
-            'unit_amount' => 'required|numeric|min:0',
-            'quantity' => 'required|integer|min:1',
-            'nome' => 'required|string|min:1',
-        ]);
-
-        $ingresso->update($request->all());
-        return response()->json($ingresso);
-    }
-
-    public function destroy($id) {
-        Ingresso::findOrFail($id)->delete();
-        return redirect()->route('compraingressos.index')->with('success', 'Ingresso removido com sucesso!');
-    }
 }

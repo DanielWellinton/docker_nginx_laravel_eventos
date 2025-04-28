@@ -1,72 +1,76 @@
 @extends('layouts.comum')
 
-@section('title', 'Comprar Ingressos')
+@section('head')
+    <script src="https://js.stripe.com/v3/"></script>
+@endsection
 
 @section('content')
+<div class="container mt-5">
+    <h1 class="text-2xl font-bold mb-6 text-center">Finalizar Compra</h1>
 
-<div class="card">
-    <div class="card-header">
-        <h3>Comprar Ingressos</h3>
-    </div>
-    <div class="card-body">
-        <form action="{{ route('compraingressos.store') }}" 
-              method="POST" enctype="multipart/form-data">
-            @csrf
+    <div class="bg-white shadow-md rounded p-6 max-w-xl mx-auto">
+        <h2 class="text-xl font-semibold mb-4">Resumo da Compra</h2>
 
-            @if ($ingressos->count() > 0)
-                <h3 class="mt-4">Ingressos Disponíveis</h3>
+        <ul class="divide-y divide-gray-200 mb-6">
+        @php
+            $total = 0;
+            $ingressos = json_decode($checkoutSession->metadata->ingressos, true) ?? [];
+        @endphp
 
-                <div class="list-group">
-                    <form action="{{ route('compraingressos.create') }}" method="POST">
-                        @csrf
+        @foreach ($ingressos as $nome => $quantidade)
+            @php
+                $ingresso = App\Models\Ingresso::where('name', $nome)->first();
+                $preco = $ingresso ? $ingresso->priceAtivo->unit_amount / 100 : 0; // Preço em reais
+                $total += $preco * $quantidade;
+            @endphp
+            <li class="py-2 flex justify-between">
+                <span>{{ $nome }}</span>
+                <span>x{{ $quantidade }}</span>
+                <span>R$ {{ number_format($preco * $quantidade, 2, ',', '.') }}</span>
+            </li>
+        @endforeach
 
-                        @foreach ($ingressos as $ingresso)
-                            <div class="list-group-item d-flex justify-content-between align-items-center p-3">
-                                <div>
-                                    <h5 class="mb-1">{{ $ingresso->name }}</h5>
-                                    <p class="mb-1">Preço: R$ {{ number_format($ingresso->unit_amount, 2, ',', '.') }}</p>
-                                    <small class="text-muted"><span class="badge bg-success">Disponível</span></small>
-                                </div>
+        </ul>
 
-                                <div class="d-flex align-items-center">
-                                    <button type="button" class="btn btn-outline-secondary btn-sm" id="btn_menos_{{ $ingresso->id }}" onclick="alterarQuantidade('{{ $ingresso->id }}', -1)">-</button>
-                                    <input type="text" id="quantidade_{{ $ingresso->id }}" class="form-control mx-2 text-center" value="{{ $ingresso->quantity }}" style="width: 50px;" readonly>
-                                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="alterarQuantidade('{{ $ingresso->id }}', 1)">+</button>
-                                    <input type="hidden" name="ingressos[{{ $ingresso->id }}]" id="hidden_quantidade_{{ $ingresso->id }}" value="0">
-                                </div>
-                            </div>
-                        @endforeach
+        <div class="flex justify-between items-center mb-6">
+            <span class="font-semibold">Total:</span>
+            <span class="text-xl font-bold text-indigo-600">R$ {{ number_format($total, 2, ',', '.') }}</span>
+        </div>
 
-                        <div class="mt-4 text-end">
-                            <button type="submit" class="btn btn-primary">Comprar Ingressos</button>
-                        </div>
-                    </form>
-                </div>
+        <div class="text-center">
+            <button id="checkout-button" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-6 rounded-lg transition">
+                Pagar agora
+            </button>
+        </div>
 
-                <script>
-                    let capacidadeMaxima = 500;
-
-                    function alterarQuantidade(id, incremento) {
-                        let input = document.getElementById(`quantidade_${id}`);
-                        let btnMenos = document.getElementById(`btn_menos_${input.id.split("_")[1]}`);
-                        let valorAtual = parseInt(input.value);
-                        let novoValor = valorAtual + incremento;
-                        if (novoValor < 0) novoValor = 0;
-                        if (novoValor > capacidadeMaxima) return;
-                        input.value = novoValor;
-                        document.getElementById(`hidden_quantidade_${id}`).value = novoValor;
-                        btnMenos.disabled = input.value == 0;
-                    }
-                    document.querySelectorAll("input[id^='quantidade_']").forEach(input => {
-                        let btnMenos = document.getElementById(`btn_menos_${input.id.split("_")[1]}`);
-                        btnMenos.disabled = input.value == 0;
-                    });
-                </script>
-            @endif
-
-            <a href="{{ route('compraingressos.index') }}" class="btn btn-secondary">Cancelar</a>
-        </form>
+        <!-- Loader -->
+        <div id="loading" class="hidden text-center mt-6">
+            <p>Redirecionando para o pagamento...</p>
+        </div>
     </div>
 </div>
 
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const stripe = Stripe('{{ env('STRIPE_KEY') }}');
+        const checkoutButton = document.getElementById('checkout-button');
+        const loading = document.getElementById('loading');
+
+        checkoutButton.addEventListener('click', function () {
+            // Mostrar o loader
+            loading.classList.remove('hidden');
+            checkoutButton.classList.add('hidden');
+
+            stripe.redirectToCheckout({
+                sessionId: '{{ $checkoutSession->id }}'
+            }).then(function (result) {
+                if (result.error) {
+                    alert(result.error.message);
+                    loading.classList.add('hidden');
+                    checkoutButton.classList.remove('hidden');
+                }
+            });
+        });
+    });
+</script>
 @endsection

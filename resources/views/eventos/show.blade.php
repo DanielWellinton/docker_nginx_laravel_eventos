@@ -10,10 +10,10 @@ Carbon::setLocale('pt_BR');
 @section('title', $evento->nome)
 
 @section('head')
-    <script
+    <!-- <script
         src="https://maps.googleapis.com/maps/api/js?key={{ getenv('MAPS_KEY') }}&libraries=maps,marker&v=beta"
         defer
-    ></script>
+    ></script> -->
 @endsection
 
 @section('content')
@@ -56,25 +56,25 @@ Carbon::setLocale('pt_BR');
                 </div>
             </div>
 
-            <gmp-map center="{{ $evento->latitude }},{{ $evento->longitude }}" zoom="10" map-id="DEMO_MAP_ID" style="height: 400px">
+            <!-- <gmp-map center="{{ $evento->latitude }},{{ $evento->longitude }}" zoom="10" map-id="DEMO_MAP_ID" style="height: 400px">
                 <gmp-advanced-marker
                     position="{{ $evento->latitude }},{{ $evento->longitude }}"
                     title="Mountain View, CA"
                 ></gmp-advanced-marker>
-            </gmp-map>
+            </gmp-map> -->
 
             @if ($evento->ingressos->count() > 0)
                 <h3 class="mt-4">Ingressos Disponíveis</h3>
 
                 <div class="list-group">
-                    <form action="{{ route('compraingressos.create') }}" method="GET">
+                    <form id="formCompra" action="{{ route('compraingressos.store') }}" method="POST">
                         @csrf
 
                         @foreach ($evento->ingressos as $ingresso)
                             <div class="list-group-item d-flex justify-content-between align-items-center p-3">
                                 <div>
                                     <h5 class="mb-1">{{ $ingresso->name }}</h5>
-                                    <p class="mb-1">Preço: R$ {{ number_format($ingresso->unit_amount, 2, ',', '.') }}</p>
+                                    <p class="mb-1">Preço: R$ {{ number_format($ingresso->priceAtivo->unit_amount / 100, 2, ',', '.') }}</p>
                                     <small class="text-muted"><span class="badge bg-success">Disponível</span></small>
                                 </div>
 
@@ -111,6 +111,29 @@ Carbon::setLocale('pt_BR');
                         let btnMenos = document.getElementById(`btn_menos_${input.id.split("_")[1]}`);
                         btnMenos.disabled = input.value == 0;
                     });
+
+                    document.getElementById('formCompra').addEventListener('submit', async function(event) {
+    event.preventDefault(); // Não envia o form normalmente
+
+    const form = event.target;
+    const formData = new FormData(form);
+
+    const response = await fetch(form.action, {
+        method: 'POST',
+        headers: {
+            'X-CSRF-TOKEN': '{{ csrf_token() }}',
+            'Accept': 'application/json',
+        },
+        body: formData
+    });
+
+    if (response.redirected) {
+        window.location.href = response.url; // Redireciona manualmente
+    } else {
+        const data = await response.json();
+        alert(data.message || 'Erro inesperado');
+    }
+});
                 </script>
             @endif
         </div>
